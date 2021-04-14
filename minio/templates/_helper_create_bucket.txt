@@ -1,4 +1,11 @@
 #!/bin/sh
+
+#
+# This is a patched copy of the original template from
+# https://github.com/minio/charts/blob/8.0.10/minio/templates/_helper_create_bucket.txt
+# which supersedes it.
+#
+
 set -e ; # Have script exit in the event of a failed command.
 
 {{- if .Values.configPathmc }}

@@ -43,20 +43,26 @@ checkBucketExists() {
   return $?
 }
 
-# createBucket ($bucket, $policy, $purge)
+# createBucket ($bucket, $policy, $purge, $versioning, $versionExpiryDays)
 # Ensure bucket exists, purging if asked to
 createBucket() {
   BUCKET=$1
   POLICY=$2
   PURGE=$3
   VERSIONING=$4
+  VERSION_EXPIRY_DAYS=$5
 
+  echo " "
+  echo "==========================================================="
+  echo "====== Processing Bucket: $BUCKET ========================="
+  echo "=====>"
   # Purge the bucket, if set & exists
   # Since PURGE is user input, check explicitly for `true`
   if [ $PURGE = true ]; then
     if checkBucketExists $BUCKET ; then
       echo "Purging bucket '$BUCKET'."
       set +e ; # don't exit if this fails
+      echo mc rm -r --force myminio/$BUCKET
       ${MC} rm -r --force myminio/$BUCKET
       set -e ; # reset `e` as active
     else
@@ -67,29 +73,55 @@ createBucket() {
   # Create the bucket if it does not exist
   if ! checkBucketExists $BUCKET ; then
     echo "Creating bucket '$BUCKET'"
+    echo mc mb myminio/$BUCKET
     ${MC} mb myminio/$BUCKET
   else
     echo "Bucket '$BUCKET' already exists."
-  fi
-
-
-  # set versioning for bucket
-  if [ ! -z $VERSIONING ] ; then
-    if [ $VERSIONING = true ] ; then
-        echo "Enabling versioning for '$BUCKET'"
-        ${MC} version enable myminio/$BUCKET
-    elif [ $VERSIONING = false ] ; then
-        echo "Suspending versioning for '$BUCKET'"
-        ${MC} version suspend myminio/$BUCKET
-    fi
-  else
-      echo "Bucket '$BUCKET' versioning unchanged."
   fi
 
   # At this point, the bucket should exist, skip checking for existence
   # Set policy on the bucket
   echo "Setting policy of bucket '$BUCKET' to '$POLICY'."
   ${MC} policy set $POLICY myminio/$BUCKET
+  
+  # set versioning for bucket
+  if [ ! -z $VERSIONING ] ; then
+    if [ $VERSIONING = true ] ; then
+        echo "Enabling versioning for '$BUCKET'"
+        echo mc version enable myminio/$BUCKET
+        ${MC} version enable myminio/$BUCKET
+    elif [ $VERSIONING = false ] ; then
+        echo "Suspending versioning for '$BUCKET'"
+        echo mc version suspend myminio/$BUCKET
+        ${MC} version suspend myminio/$BUCKET
+    fi
+  else
+      echo "Bucket '$BUCKET' versioning unchanged."
+  fi
+
+  # Set lifecycle of non-current versions on the bucket
+  if [ ! -z $VERSION_EXPIRY_DAYS ] ; then
+    echo "Resetting bucket '$BUCKET' lifecycle of non-current versions to $VERSION_EXPIRY_DAYS days."
+    set +e # allow failure if no ILM rules are set up
+    echo mc ilm rm --all --force myminio/$BUCKET
+    ${MC} ilm rm --all --force myminio/$BUCKET
+    set -e
+    echo mc ilm add myminio/$BUCKET --noncurrentversion-expiration-days $VERSION_EXPIRY_DAYS
+    ${MC} ilm add myminio/$BUCKET --noncurrentversion-expiration-days $VERSION_EXPIRY_DAYS
+  else
+    echo "Bucket '$BUCKET' lifecycle of non-current versions unchanged."
+  fi
+  
+  # Show resulting bucket configuration
+  echo "Showing bucket configuration"
+  set +e # allow continue on failures
+  echo mc stat myminio/$BUCKET
+  ${MC} stat myminio/$BUCKET
+  echo mc ilm ls myminio/$BUCKET
+  ${MC} ilm ls myminio/$BUCKET
+  echo mc ilm export myminio/$BUCKET
+  ${MC} ilm export myminio/$BUCKET
+  set -e # disallow failures
 }
 
 # Try connecting to Minio instance
@@ -102,10 +134,10 @@ connectToMinio $scheme
 
 {{- if or .Values.defaultBucket.enabled }}
 # Create the bucket
-createBucket {{ .Values.defaultBucket.name }} {{ .Values.defaultBucket.policy }} {{ .Values.defaultBucket.purge }} {{ .Values.defaultBucket.versioning }}
+createBucket {{ .Values.defaultBucket.name }} {{ .Values.defaultBucket.policy }} {{ .Values.defaultBucket.purge }} {{ .Values.defaultBucket.versioning }} {{ .Values.defaultBucket.versionExpiryDays }}
 {{ else if .Values.buckets }}
 # Create the buckets
 {{- range .Values.buckets }}
-createBucket {{ .name }} {{ .policy }} {{ .purge }} {{ .versioning }}
+createBucket {{ .name }} {{ .policy }} {{ .purge }} {{ .versioning }} {{ .versionExpiryDays }}
 {{- end }}
 {{- end }}
